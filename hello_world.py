@@ -19,7 +19,7 @@ class Track:
         batch.add(int(len(self.inner_points) / 2), pyglet.gl.GL_LINE_LOOP, None, ('v2i', tuple(self.inner_points)))
 
 class Car(pyglet.sprite.Sprite):            
-    def __init__(self, x, y, angle=0.0, max_steering=30, max_acceleration=5.0):
+    def __init__(self, x, y, angle=0.0, max_steering=30, max_acceleration=250.0):
         # size of car: 100 x 50
         image = pyglet.image.load('resources/car.png')
         image.anchor_x = int(image.width / 2)
@@ -32,8 +32,8 @@ class Car(pyglet.sprite.Sprite):
         self.length = image.height
         self.max_acceleration = max_acceleration
         self.max_steering = max_steering
-        self.max_velocity = 80
-        self.brake_deceleration = 500
+        self.max_velocity = 250
+        self.brake_deceleration = 1000
         self.free_deceleration = 100
 
         self.acceleration = 0.0
@@ -41,36 +41,34 @@ class Car(pyglet.sprite.Sprite):
 
     def handle_player(self, dt):
         if keymap[key.UP]:
-            if self.velocity.length < 0:
+            if self.velocity.x < 0:
                 self.acceleration = self.brake_deceleration
             else:
-                self.acceleration += 20000 * dt    
-
+                self.acceleration += 200 * dt    
         elif keymap[key.DOWN]:
-            if self.velocity.length > 0:
+            if self.velocity.x > 0:
                 self.acceleration = -self.brake_deceleration
             else:
-                self.acceleration -= 20000 * dt
-
+                self.acceleration -= 200 * dt
         elif keymap[key.SPACE]:
-            if abs(self.velocity.length) > dt * self.brake_deceleration:
-                self.acceleration = -copysign(self.brake_deceleration,self.velocity.length)
+            if abs(self.velocity.x) > dt * self.brake_deceleration:
+                self.acceleration = -copysign(self.brake_deceleration,self.velocity.x)
             else:
-                self.acceleration = -self.velocity.length / dt                
+                self.acceleration = -self.velocity.x / dt                
         else:
-            if abs(self.velocity.length) > dt * self.free_deceleration:
-                    self.acceleration = -copysign(self.free_deceleration, self.velocity.length)
+            if abs(self.velocity.x) > dt * self.free_deceleration:
+                self.acceleration = -copysign(self.free_deceleration, self.velocity.x)
             else:
                 if dt != 0:
-                    self.acceleration = -self.velocity.length / dt    
+                    self.acceleration = -self.velocity.x / dt    
         
         # limit max accelleration.        
         self.acceleration = max(-self.max_acceleration, min(self.acceleration, self.max_acceleration))
 
         if keymap[key.RIGHT]:
-            self.steering += 30 * dt
+            self.steering += 100 * dt
         elif keymap[key.LEFT]:
-            self.steering -= 30 * dt
+            self.steering -= 100 * dt
         else:
             self.steering = 0
         
@@ -81,8 +79,8 @@ class Car(pyglet.sprite.Sprite):
 
     def update(self, dt):
         self.velocity += (self.acceleration * dt, 0)
-        if self.velocity.length != 0:
-            self.velocity.length = max(-self.max_velocity, min(self.velocity.length, self.max_velocity))
+        if self.velocity.x != 0:
+            self.velocity.x = max(-self.max_velocity, min(self.velocity.x, self.max_velocity))
 
         if self.steering:
             turning_radius = self.length / tan(radians(self.steering))
@@ -96,10 +94,6 @@ class Car(pyglet.sprite.Sprite):
         # Don't drive off screen.
         self.position_vector.x = max(0, min(self.position_vector.x, window.width))
         self.position_vector.y = max(0, min(self.position_vector.y, window.height))
-        #if self.position_vector.x < 0: self.position_vector.x = 0
-        #if self.position_vector.x > self._window.width: self.position_vector.x = self._window.width
-        #if self.position_vector.y < 0: self.position_vector.y = 0
-        #if self.position_vector.y > self._window.height: self.position_vector.y = self._window.height
 
         self.x = self.position_vector.x
         self.y = self.position_vector.y
@@ -128,7 +122,7 @@ class Gamestate():
 
     def update(self, dt):
         self.debug_sprite.text = f"sprite x: {floor(self.car.x)}, y: {floor(self.car.y)}, dir: {floor(self.car.rotation)}"
-        self.debug_vel.text = f"vel: {self.car.velocity}, l: {round(self.car.velocity.length,1)}"
+        self.debug_vel.text = f"l: {round(self.car.velocity.x,1)}, dir: {floor(self.car.velocity.angle)}, accel: {self.car.acceleration}"
         self.handle_player(dt)
 
 world = Gamestate()        
