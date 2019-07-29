@@ -19,7 +19,7 @@ class Track:
         batch.add(int(len(self.inner_points) / 2), pyglet.gl.GL_LINE_LOOP, None, ('v2i', tuple(self.inner_points)))
 
 class Car(pyglet.sprite.Sprite):            
-    def __init__(self, x, y, angle=0.0, max_steering=30, max_acceleration=250.0):
+    def __init__(self, x, y, angle=0.0, max_steering=40, max_acceleration=350.0):
         # size of car: 100 x 50
         image = pyglet.image.load('resources/car.png')
         image.anchor_x = int(image.width / 2)
@@ -32,9 +32,10 @@ class Car(pyglet.sprite.Sprite):
         self.length = image.height
         self.max_acceleration = max_acceleration
         self.max_steering = max_steering
-        self.max_velocity = 250
-        self.brake_deceleration = 1000
-        self.free_deceleration = 100
+        self.max_velocity = 200
+        self.brake_deceleration = 750
+        self.free_deceleration = 200
+        self.steer_rate = 175
 
         self.acceleration = 0.0
         self.steering = 0.0
@@ -44,7 +45,8 @@ class Car(pyglet.sprite.Sprite):
             if self.velocity.x < 0:
                 self.acceleration = self.brake_deceleration
             else:
-                self.acceleration += 200 * dt    
+                #self.acceleration += 200 * dt    
+                self.acceleration = self.max_acceleration # Pedal = metal
         elif keymap[key.DOWN]:
             if self.velocity.x > 0:
                 self.acceleration = -self.brake_deceleration
@@ -54,7 +56,7 @@ class Car(pyglet.sprite.Sprite):
             if abs(self.velocity.x) > dt * self.brake_deceleration:
                 self.acceleration = -copysign(self.brake_deceleration,self.velocity.x)
             else:
-                self.acceleration = -self.velocity.x / dt                
+                self.acceleration = -1 * self.velocity.x / dt            
         else:
             if abs(self.velocity.x) > dt * self.free_deceleration:
                 self.acceleration = -copysign(self.free_deceleration, self.velocity.x)
@@ -62,13 +64,14 @@ class Car(pyglet.sprite.Sprite):
                 if dt != 0:
                     self.acceleration = -self.velocity.x / dt    
         
-        # limit max accelleration.        
-        self.acceleration = max(-self.max_acceleration, min(self.acceleration, self.max_acceleration))
+        # limit max accelleration.   
+        if not keymap[key.SPACE]:     
+            self.acceleration = max(-self.max_acceleration, min(self.acceleration, self.max_acceleration))
 
         if keymap[key.RIGHT]:
-            self.steering += 100 * dt
+            self.steering += 50 + self.steer_rate * dt
         elif keymap[key.LEFT]:
-            self.steering -= 100 * dt
+            self.steering -= 50 + self.steer_rate * dt
         else:
             self.steering = 0
         
@@ -108,7 +111,7 @@ class Debug(pyglet.text.document.FormattedDocument):
 
 class Gamestate():
     def __init__(self):
-        self.car = Car(100, 200)
+        self.car = Car(155, 500)
         self.track = Track()
         self.debug_sprite = pyglet.text.Label('Sprite debug', font_size=10, font_name='Times New Roman',
                           x=790, y=590, anchor_x='right', anchor_y='center', batch=batch)
@@ -122,7 +125,7 @@ class Gamestate():
 
     def update(self, dt):
         self.debug_sprite.text = f"sprite x: {floor(self.car.x)}, y: {floor(self.car.y)}, dir: {floor(self.car.rotation)}"
-        self.debug_vel.text = f"l: {round(self.car.velocity.x,1)}, dir: {floor(self.car.velocity.angle)}, accel: {self.car.acceleration}"
+        self.debug_vel.text = f"l: {round(self.car.velocity.x,1)}, dir: {floor(self.car.velocity.angle)}, accel: {round(self.car.acceleration, 1)}"
         self.handle_player(dt)
 
 world = Gamestate()        
