@@ -1,6 +1,6 @@
 import pyglet
 from pyglet.window import key, mouse
-from math import tan, radians, degrees, copysign, floor, cos, sin
+from math import tan, radians, degrees, copysign, floor, cos, sin, sqrt
 import builtins
 from pymunk import Vec2d, Poly
 from itertools import chain
@@ -26,6 +26,18 @@ def rotate(origin, point, angle):
     qx = ox + cos(angle_r) * (px - ox) - sin(angle_r) * (py - oy)
     qy = oy + sin(angle_r) * (px - ox) + cos(angle_r) * (py - oy)
     return qx, qy
+
+def closest_point(target, point1, point2):
+    if point1 == None:
+        return point2
+    if point2 == None:
+        return point1
+    d1 = sqrt( ((target.x-point1.x)**2)+((target.y-point1.y)**2) )
+    d2 = sqrt( ((target.x-point2.x)**2)+((target.y-point2.y)**2) )
+    if (d1 < d2):
+        return point1
+    else:
+        return point2
 
 class Track:
     def __init__(self):
@@ -55,6 +67,7 @@ class Car(pyglet.sprite.Sprite):
         image.anchor_y = int(image.height / 2)
         pyglet.sprite.Sprite.__init__(self, image, x, y, batch=car_batch)
         self.scale = 0.4
+        self.verbose = False
         self.position_vector = Vec2d(x, y)
         self.velocity = Vec2d(0.0, 0.0)
         self.rotation = angle
@@ -65,11 +78,16 @@ class Car(pyglet.sprite.Sprite):
         self.brake_deceleration = 750
         self.free_deceleration = 200
         self.steer_rate = 175
-
         self.acceleration = 0.0
         self.steering = 0.0
 
-        self.shape = car_batch.add(4, pyglet.gl.GL_LINE_LOOP, None, ('v2i', self.get_body_flat()))
+        self.radar_depth = 140
+        self.radar = [None] * 8     # track radar hit points 
+
+        if self.verbose:
+            self.shape = car_batch.add(4, pyglet.gl.GL_LINE_LOOP, None, ('v2i', self.get_body_flat()))
+            self.radar_lines = car_batch.add(16, pyglet.gl.GL_LINES, None, ('v2i', self.get_radar_lines_flat()))
+            self.radar_points = car_batch.add(0, pyglet.gl.GL_LINES, None, ('v2i', ()))
         self.collision_point = None
 
     def handle_player(self, dt):
@@ -133,7 +151,10 @@ class Car(pyglet.sprite.Sprite):
         self.x = self.position_vector.x
         self.y = self.position_vector.y
 
-        self.shape.vertices = self.get_body_flat()
+        if self.verbose:
+            self.shape.vertices = self.get_body_flat()
+            self.radar_lines.vertices = self.get_radar_lines_flat()
+            self.draw_radar_hits()
 
     # https://stackoverflow.com/questions/12161277/how-to-rotate-a-vertex-around-a-certain-point
     # for each corner, apply rotation around (x,y) 
@@ -153,6 +174,23 @@ class Car(pyglet.sprite.Sprite):
         body_points = tuple(chain(*self.get_body())) # flatten
         return tuple(int(i) for i in body_points) # convert floats to ints
 
+    def get_radar_lines(self):
+        radars = []
+        # TODO: change the front facing ones to be more dense? e.g. 30, 60 degrees vs. 45 and 90?
+        for i in range(0, 360, 45):
+            angle = radians(-self.rotation+i)
+            radars.append( self.position )
+            radars.append( (self.x + self.radar_depth * cos(angle),self.y + self.radar_depth * sin(angle)) )
+        return tuple(radars)
+    
+    def get_radar_lines_flat(self):
+        radar_points = tuple(chain(*self.get_radar_lines())) # flatten
+        return tuple(int(i) for i in radar_points) # convert floats to ints        
+
+    # def get_radar_points_flat(self):
+    #     radar_points = tuple(chain(*self.radar))
+    #     return tuple(int(i) for i in radar_points)
+
     def draw_collision(self, point):
         hit = [point.x - 5, point.y - 5,
             point.x + 5, point.y + 5,
@@ -170,6 +208,49 @@ class Car(pyglet.sprite.Sprite):
             self.collision_point.delete()
             self.collision_point = None
 
+    def handle_radar(self, track):
+        radar_points = self.get_radar_lines()
+        outer_points = track.get_outer_points()
+        inner_points = track.get_inner_points()        
+        radar_hits = [None] * (int(len(radar_points)/2))
+        # check hits for each radar
+        for i in range(0, len(radar_points), 2):
+            r1 = radar_points[i]
+            r2 = radar_points[i+1]
+
+            hit_point = None
+            for j in range(len(outer_points)-1):
+                track_point1 = outer_points[j]
+                track_point2 = outer_points[j+1]
+                hit_point = line_line_hit(Vec2d(track_point1), Vec2d(track_point2), Vec2d(r1), Vec2d(r2))
+                if hit_point != None:
+                    radar_hits[int(i/2)] = closest_point(Vec2d(self.position), hit_point, radar_hits[int(i/2)])
+            for j in range(len(inner_points)-1):
+                track_point1 = inner_points[j]
+                track_point2 = inner_points[j+1]
+                hit_point = line_line_hit(Vec2d(track_point1), Vec2d(track_point2), Vec2d(r1), Vec2d(r2))
+                if hit_point != None:
+                    radar_hits[int(i/2)] = closest_point(Vec2d(self.position), hit_point, radar_hits[int(i/2)])
+        self.radar = radar_hits
+        if self.verbose:
+            self.draw_radar_hits()
+
+    def draw_radar_hits(self):
+        vertices = []
+        for i in range(8):
+            hit_point = self.radar[i]
+            if hit_point != None:
+                vertices.append(hit_point.x - 5); vertices.append(hit_point.y - 5)
+                vertices.append(hit_point.x + 5); vertices.append(hit_point.y + 5)
+                vertices.append(hit_point.x - 5); vertices.append(hit_point.y + 5)
+                vertices.append(hit_point.x + 5); vertices.append(hit_point.y - 5)
+        self.radar_points.resize(int(len(vertices)/2))
+        self.radar_points.vertices = [int(v) for v in vertices]        
+
+    # TODO: consider moving all car graphics here.
+    def draw(self):
+        return
+
     def __repr__(self):
         return f"Car(pos={self.position_vector}, ang={self.angle})"
 
@@ -181,7 +262,7 @@ class Gamestate():
                           x=790, y=590, anchor_x='right', anchor_y='center', batch=batch)
         self.debug_vel = pyglet.text.Label('Vel debug', font_size=10, font_name='Times New Roman',
                           x=790, y=575, anchor_x='right', anchor_y='center', batch=batch)   
-        self.car_hit_point = None                       
+        self.car_hit_point = None
     
     def handle_player(self, dt):
         self.car.handle_player(dt)
@@ -191,13 +272,15 @@ class Gamestate():
         self.debug_vel.text = f"l: {round(self.car.velocity.x,1)}, dir: {floor(self.car.velocity.angle)}, accel: {round(self.car.acceleration, 1)}"
         self.handle_player(dt)
         self.detect_collision()
+        self.car.handle_radar(self.track) # TODO: consider running radar at lower frequency
     
     def detect_collision(self):
         body_points = self.car.get_body()
+        outer_points = self.track.get_outer_points()
         # Check outer track
-        for i in range(len(self.track.get_outer_points())-1):
-            track_point1 = self.track.get_outer_points()[i]
-            track_point2 = self.track.get_outer_points()[i+1]
+        for i in range(len(outer_points)-1):
+            track_point1 = outer_points[i]
+            track_point2 = outer_points[i+1]
 
             # Check only 2 sides of the car is likely enough.
             # One side:
@@ -216,9 +299,10 @@ class Gamestate():
                 return # Found collision, look no further.  
 
         # Check inner track.
-        for i in range(len(self.track.get_inner_points())-1):
-            track_point1 = self.track.get_inner_points()[i]
-            track_point2 = self.track.get_inner_points()[i+1]
+        inner_points = self.track.get_inner_points()
+        for i in range(len(inner_points)-1):
+            track_point1 = inner_points[i]
+            track_point2 = inner_points[i+1]
 
             # Check only 2 sides of the car is likely enough.
             # One side:
@@ -249,9 +333,15 @@ def line_point_hit(a, b, p):
         return True
     return False
 
+# http://jeffreythompson.org/collision-detection/line-line.php
 def line_line_hit(a, b, c, d):
-    uA = ((d.x-c.x)*(a.y-c.y) - (d.y-c.y)*(a.x-c.x)) / ((d.y-c.y)*(b.x-a.x) - (d.x-c.x)*(b.y-a.y))
-    uB = ((b.x-a.x)*(a.y-c.y) - (b.y-a.y)*(a.x-c.x)) / ((d.y-c.y)*(b.x-a.x) - (d.x-c.x)*(b.y-a.y))
+    # when lines are parallel, possible that ZeroDivisionError occurs. For now, catching the exception:
+    # https://stackoverflow.com/questions/15866364/any-way-to-avoid-or-allow-division-by-zero-in-this-line-intersection-algorithm
+    try:
+        uA = ((d.x-c.x)*(a.y-c.y) - (d.y-c.y)*(a.x-c.x)) / ((d.y-c.y)*(b.x-a.x) - (d.x-c.x)*(b.y-a.y))
+        uB = ((b.x-a.x)*(a.y-c.y) - (b.y-a.y)*(a.x-c.x)) / ((d.y-c.y)*(b.x-a.x) - (d.x-c.x)*(b.y-a.y))
+    except ZeroDivisionError: # Lines are parallel
+        return None
     if (uA >= 0 and uA <= 1 and uB >= 0 and uB <= 1):
         intersectionX = a.x + (uA * (b.x-a.x))
         intersectionY = a.y + (uA * (b.y-a.y))
