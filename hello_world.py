@@ -35,8 +35,17 @@ class Track:
         self.inner_points = [139, 472, 357, 462, 473, 456, 562, 464, 621, 453, 639, 422, 642, 386, 646, 312, 657, 263, 647, 188, 623, 155, 565, 149, 524, 148, 501, 192, 485, 244, 477, 298, 433, 327, 379, 332, 317, 335, 261, 309, 250, 265, 219, 220, 213, 180, 193, 138, 172, 134, 153, 149, 143, 210, 121, 372, 121, 451, 139, 472] 
         batch.add(int(len(self.inner_points) / 2), pyglet.gl.GL_LINE_LOOP, None, ('v2i', tuple(self.inner_points)))
 
-    def get_lines(self):
-        return
+    def get_outer_points(self):
+        lines = []
+        for i in range(0, len(self.outer_points), 2):
+            lines.append((self.outer_points[i], self.outer_points[i+1]))
+        return lines
+    
+    def get_inner_points(self):
+        lines = []
+        for i in range(0, len(self.inner_points), 2):
+            lines.append((self.inner_points[i], self.inner_points[i+1]))
+        return lines
 
 class Car(pyglet.sprite.Sprite):            
     def __init__(self, x, y, angle=0.0, max_steering=40, max_acceleration=350.0):
@@ -59,7 +68,9 @@ class Car(pyglet.sprite.Sprite):
 
         self.acceleration = 0.0
         self.steering = 0.0
-        self.shape = car_batch.add(4, pyglet.gl.GL_LINE_LOOP, None, ('v2i', self.get_body()))        
+
+        self.shape = car_batch.add(4, pyglet.gl.GL_LINE_LOOP, None, ('v2i', self.get_body_flat()))
+        self.collision_point = None
 
     def handle_player(self, dt):
         if keymap[key.UP]:
@@ -122,7 +133,7 @@ class Car(pyglet.sprite.Sprite):
         self.x = self.position_vector.x
         self.y = self.position_vector.y
 
-        self.shape.vertices = self.get_body()
+        self.shape.vertices = self.get_body_flat()
 
     # https://stackoverflow.com/questions/12161277/how-to-rotate-a-vertex-around-a-certain-point
     # for each corner, apply rotation around (x,y) 
@@ -136,8 +147,28 @@ class Car(pyglet.sprite.Sprite):
         q2 = rotate(center, p2, -self.rotation)
         q3 = rotate(center, p3, -self.rotation)
         q4 = rotate(center, p4, -self.rotation)
-        body_tuple = tuple(chain(*(q1, q2, q3, q4))) # flatten
-        return tuple(int(i) for i in body_tuple) # convert floats to ints
+        return (q1, q2, q3, q4)
+
+    def get_body_flat(self):
+        body_points = tuple(chain(*self.get_body())) # flatten
+        return tuple(int(i) for i in body_points) # convert floats to ints
+
+    def draw_collision(self, point):
+        hit = [point.x - 5, point.y - 5,
+            point.x + 5, point.y + 5,
+            point.x - 5, point.y + 5,
+            point.x + 5, point.y - 5]
+        if self.collision_point != None:
+            self.collision_point.delete()
+        self.collision_point = car_batch.add(4, pyglet.gl.GL_LINES, None, 
+                ('v2i', [int(i) for i in hit]),
+                ('c3B', (255, 0, 0, 255, 0, 0, 255, 0, 0, 255, 0, 0,))
+            )                                            
+
+    def remove_collision(self):
+        if self.collision_point != None:
+            self.collision_point.delete()
+            self.collision_point = None
 
     def __repr__(self):
         return f"Car(pos={self.position_vector}, ang={self.angle})"
@@ -149,7 +180,8 @@ class Gamestate():
         self.debug_sprite = pyglet.text.Label('Sprite debug', font_size=10, font_name='Times New Roman',
                           x=790, y=590, anchor_x='right', anchor_y='center', batch=batch)
         self.debug_vel = pyglet.text.Label('Vel debug', font_size=10, font_name='Times New Roman',
-                          x=790, y=575, anchor_x='right', anchor_y='center', batch=batch)                          
+                          x=790, y=575, anchor_x='right', anchor_y='center', batch=batch)   
+        self.car_hit_point = None                       
     
     def handle_player(self, dt):
         self.car.handle_player(dt)
@@ -158,7 +190,52 @@ class Gamestate():
         self.debug_sprite.text = f"sprite x: {floor(self.car.x)}, y: {floor(self.car.y)}, dir: {floor(self.car.rotation)}"
         self.debug_vel.text = f"l: {round(self.car.velocity.x,1)}, dir: {floor(self.car.velocity.angle)}, accel: {round(self.car.acceleration, 1)}"
         self.handle_player(dt)
+        self.detect_collision()
     
+    def detect_collision(self):
+        body_points = self.car.get_body()
+        # Check outer track
+        for i in range(len(self.track.get_outer_points())-1):
+            track_point1 = self.track.get_outer_points()[i]
+            track_point2 = self.track.get_outer_points()[i+1]
+
+            # Check only 2 sides of the car is likely enough.
+            # One side:
+            body_point1 = body_points[1]
+            body_point2 = body_points[2]
+            hit_point = line_line_hit(Vec2d(track_point1), Vec2d(track_point2), Vec2d(body_point1), Vec2d(body_point2))                
+            if (hit_point == None):
+                  # Other side:
+                  body_point1 = body_points[0]
+                  body_point2 = body_points[3]
+                  hit_point = line_line_hit(Vec2d(track_point1), Vec2d(track_point2), Vec2d(body_point1), Vec2d(body_point2))  
+            if (hit_point == None):
+                self.car.remove_collision()
+            else:
+                self.car.draw_collision(hit_point)
+                return # Found collision, look no further.  
+
+        # Check inner track.
+        for i in range(len(self.track.get_inner_points())-1):
+            track_point1 = self.track.get_inner_points()[i]
+            track_point2 = self.track.get_inner_points()[i+1]
+
+            # Check only 2 sides of the car is likely enough.
+            # One side:
+            body_point1 = body_points[1]
+            body_point2 = body_points[2]
+            hit_point = line_line_hit(Vec2d(track_point1), Vec2d(track_point2), Vec2d(body_point1), Vec2d(body_point2))                
+            if (hit_point == None):
+                  # Other side:
+                  body_point1 = body_points[0]
+                  body_point2 = body_points[3]
+                  hit_point = line_line_hit(Vec2d(track_point1), Vec2d(track_point2), Vec2d(body_point1), Vec2d(body_point2))  
+            if (hit_point == None):
+                self.car.remove_collision()
+            else:
+                self.car.draw_collision(hit_point)
+                return # Found collision, look no further.  
+
 world = Gamestate()        
 
 accuracy = 0.1
