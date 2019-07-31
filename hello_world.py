@@ -5,6 +5,9 @@ import builtins
 from pymunk import Vec2d, Poly
 from itertools import chain
 
+from util.utils import rotate, closest_point
+from util.collision import line_line_hit, line_point_hit
+
 window = pyglet.window.Window(800, 600,caption="Game")
 keymap = pyglet.window.key.KeyStateHandler()
 window.push_handlers(keymap)
@@ -12,40 +15,15 @@ batch = pyglet.graphics.Batch()
 car_batch = pyglet.graphics.Batch()
 fps_display = pyglet.window.FPSDisplay(window=window)
 
-# https://stackoverflow.com/questions/34372480/rotate-point-about-another-point-in-degrees-python
-def rotate(origin, point, angle):
-    """
-    Rotate a point counterclockwise by a given angle around a given origin.
-
-    The angle should be given in degrees.
-    """
-    ox, oy = origin
-    px, py = point
-
-    angle_r = radians(angle)
-    qx = ox + cos(angle_r) * (px - ox) - sin(angle_r) * (py - oy)
-    qy = oy + sin(angle_r) * (px - ox) + cos(angle_r) * (py - oy)
-    return qx, qy
-
-def closest_point(target, point1, point2):
-    if point1 == None:
-        return point2
-    if point2 == None:
-        return point1
-    d1 = sqrt( ((target.x-point1.x)**2)+((target.y-point1.y)**2) )
-    d2 = sqrt( ((target.x-point2.x)**2)+((target.y-point2.y)**2) )
-    if (d1 < d2):
-        return point1
-    else:
-        return point2
-
 class Track:
-    def __init__(self):
+    def __init__(self, verbose=False):
         #group = pyglet.graphics.Group()
         self.outer_points = [112, 542, 315, 541, 476, 539, 609, 544, 700, 514, 721, 451, 734, 323, 736, 172, 692, 95, 628, 75, 514, 64, 445, 72, 440, 122, 414, 177, 404, 246, 345, 254, 321, 242, 301, 186, 290, 147, 276, 86, 250, 41, 166, 57, 78, 75, 48, 205, 29, 396, 47, 503, 112, 542]
         batch.add(int(len(self.outer_points) / 2), pyglet.gl.GL_LINE_STRIP, None, ('v2i', tuple(self.outer_points)))
         self.inner_points = [139, 472, 357, 462, 473, 456, 562, 464, 621, 453, 639, 422, 642, 386, 646, 312, 657, 263, 647, 188, 623, 155, 565, 149, 524, 148, 501, 192, 485, 244, 477, 298, 433, 327, 379, 332, 317, 335, 261, 309, 250, 265, 219, 220, 213, 180, 193, 138, 172, 134, 153, 149, 143, 210, 121, 372, 121, 451, 139, 472] 
         batch.add(int(len(self.inner_points) / 2), pyglet.gl.GL_LINE_LOOP, None, ('v2i', tuple(self.inner_points)))
+        self.gate_points = [201, 554, 193, 457, 275, 558, 276, 452, 355, 554, 359, 448, 427, 559, 427, 445, 507, 551, 505, 448, 570, 556, 570, 446, 639, 546, 608, 444, 713, 520, 625, 434, 731, 452, 625, 420, 736, 396, 636, 385, 751, 343, 632, 332, 637, 256, 747, 264, 645, 222, 750, 205, 623, 182, 715, 108, 576, 164, 579, 55, 540, 170, 506, 50, 519, 170, 425, 106, 511, 206, 403, 180, 492, 277, 401, 223, 446, 341, 393, 237, 357, 345, 349, 233, 279, 332, 331, 236, 218, 247, 315, 205, 202, 176, 309, 145, 192, 163, 291, 94, 183, 144, 237, 28, 173, 148, 159, 50, 161, 158, 63, 113, 150, 236, 35, 234, 144, 302, 33, 290, 130, 374, 27, 371, 127, 419, 32, 453, 135, 452, 74, 532]
+        self.gate_vertex_list = batch.add(int(len(self.gate_points) / 2), pyglet.gl.GL_LINES, None, ('v2i', tuple(self.gate_points)))
 
     def get_outer_points(self):
         lines = []
@@ -58,16 +36,25 @@ class Track:
         for i in range(0, len(self.inner_points), 2):
             lines.append((self.inner_points[i], self.inner_points[i+1]))
         return lines
+    
+    def get_gate_points(self):
+        lines = []
+        for i in range(0, len(self.gate_points), 2):
+            lines.append((self.gate_points[i], self.gate_points[i+1]))
+        return lines
+
+    def update(self, dt):
+        None
 
 class Car(pyglet.sprite.Sprite):            
-    def __init__(self, x, y, angle=0.0, max_steering=40, max_acceleration=350.0):
+    def __init__(self, x, y, angle=0.0, max_steering=40, max_acceleration=350.0, verbose=False):
         # size of car: 100 x 50
+        self.verbose = verbose
         image = pyglet.image.load('resources/car.png')
         image.anchor_x = int(image.width / 2)
         image.anchor_y = int(image.height / 2)
         pyglet.sprite.Sprite.__init__(self, image, x, y, batch=car_batch)
         self.scale = 0.4
-        self.verbose = False
         self.position_vector = Vec2d(x, y)
         self.velocity = Vec2d(0.0, 0.0)
         self.rotation = angle
@@ -256,24 +243,43 @@ class Car(pyglet.sprite.Sprite):
 
 class Gamestate():
     def __init__(self):
-        self.car = Car(155, 500)
-        self.track = Track()
+        self.verbose = True
+        self.car = Car(155, 500, verbose=False)
+        self.track = Track(self.verbose)
         self.debug_sprite = pyglet.text.Label('Sprite debug', font_size=10, font_name='Times New Roman',
                           x=790, y=590, anchor_x='right', anchor_y='center', batch=batch)
         self.debug_vel = pyglet.text.Label('Vel debug', font_size=10, font_name='Times New Roman',
                           x=790, y=575, anchor_x='right', anchor_y='center', batch=batch)   
         self.car_hit_point = None
-    
+
     def handle_player(self, dt):
         self.car.handle_player(dt)
 
     def update(self, dt):
         self.debug_sprite.text = f"sprite x: {floor(self.car.x)}, y: {floor(self.car.y)}, dir: {floor(self.car.rotation)}"
         self.debug_vel.text = f"l: {round(self.car.velocity.x,1)}, dir: {floor(self.car.velocity.angle)}, accel: {round(self.car.acceleration, 1)}"
+        self.track.update(dt)
         self.handle_player(dt)
-        self.detect_collision()
+        self.detect_gate()
         self.car.handle_radar(self.track) # TODO: consider running radar at lower frequency
+        hit_point = self.detect_collision()
+        if hit_point:
+            print("Hit!")
+            self.car.remove_collision()
+            self.car = Car(155, 500, verbose=False)        
     
+    def detect_gate(self):
+        gate_points = self.track.get_gate_points()
+
+        for i in range(0, len(gate_points), 2):
+            gate = int(i/2) + 1
+            gate_point1 = gate_points[i]
+            gate_point2 = gate_points[i+1]
+            hit_point = line_point_hit(Vec2d(gate_point1), Vec2d(gate_point2), Vec2d(self.car.position))
+            if hit_point:
+                # TODO - keep track of current gate, check if progress, score.
+                print(f"Gate {gate}")
+
     def detect_collision(self):
         body_points = self.car.get_body()
         outer_points = self.track.get_outer_points()
@@ -296,7 +302,7 @@ class Gamestate():
                 self.car.remove_collision()
             else:
                 self.car.draw_collision(hit_point)
-                return # Found collision, look no further.  
+                return hit_point # Found collision, look no further.  
 
         # Check inner track.
         inner_points = self.track.get_inner_points()
@@ -318,35 +324,18 @@ class Gamestate():
                 self.car.remove_collision()
             else:
                 self.car.draw_collision(hit_point)
-                return # Found collision, look no further.  
+                return hit_point # Found collision, look no further. 
+        return None 
 
 world = Gamestate()        
 
-accuracy = 0.1
-
-# detect line/point collision
-def line_point_hit(a, b, p):
-    l = a.get_distance(b)
-    d1 = a.get_distance(p)
-    d2 = b.get_distance(p)
-    if (d1+d2 >= l-accuracy and d1+d2 <= l+accuracy):
-        return True
-    return False
-
-# http://jeffreythompson.org/collision-detection/line-line.php
-def line_line_hit(a, b, c, d):
-    # when lines are parallel, possible that ZeroDivisionError occurs. For now, catching the exception:
-    # https://stackoverflow.com/questions/15866364/any-way-to-avoid-or-allow-division-by-zero-in-this-line-intersection-algorithm
-    try:
-        uA = ((d.x-c.x)*(a.y-c.y) - (d.y-c.y)*(a.x-c.x)) / ((d.y-c.y)*(b.x-a.x) - (d.x-c.x)*(b.y-a.y))
-        uB = ((b.x-a.x)*(a.y-c.y) - (b.y-a.y)*(a.x-c.x)) / ((d.y-c.y)*(b.x-a.x) - (d.x-c.x)*(b.y-a.y))
-    except ZeroDivisionError: # Lines are parallel
-        return None
-    if (uA >= 0 and uA <= 1 and uB >= 0 and uB <= 1):
-        intersectionX = a.x + (uA * (b.x-a.x))
-        intersectionY = a.y + (uA * (b.y-a.y))
-        return Vec2d(intersectionX, intersectionY)
-    return None
+@window.event
+def on_mouse_press(x, y, button, modifiers):
+    if button == mouse.LEFT:
+        print(f"x={x}, y={y}")
+        world.track.gate_points.append(x)
+        world.track.gate_points.append(y) 
+        print(world.track.gate_points)
 
 @window.event
 def on_draw():
@@ -377,7 +366,6 @@ def on_mouse_motion(x, y, dx, dy):
             hit_point_v.delete()
             hit_point_v = None
 
-
 def update(dt):
     world.update(dt)
 
@@ -387,13 +375,6 @@ def start_up():
     #window.flip() # ???
     window.set_visible(True)
     pyglet.app.run()
-
-    # @window.event
-    # def on_mouse_press(x, y, button, modifiers):
-    #     if button == mouse.LEFT:
-    #         print(f"x={x}, y={y}")
-    #         track.inner_points.append(x)
-    #         track.inner_points.append(y)
 
 if __name__ == '__main__':
     start_up()
