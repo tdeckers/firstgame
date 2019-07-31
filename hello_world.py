@@ -18,12 +18,14 @@ fps_display = pyglet.window.FPSDisplay(window=window)
 class Track:
     def __init__(self, verbose=False):
         #group = pyglet.graphics.Group()
+        self.verbose = verbose
         self.outer_points = [112, 542, 315, 541, 476, 539, 609, 544, 700, 514, 721, 451, 734, 323, 736, 172, 692, 95, 628, 75, 514, 64, 445, 72, 440, 122, 414, 177, 404, 246, 345, 254, 321, 242, 301, 186, 290, 147, 276, 86, 250, 41, 166, 57, 78, 75, 48, 205, 29, 396, 47, 503, 112, 542]
         batch.add(int(len(self.outer_points) / 2), pyglet.gl.GL_LINE_STRIP, None, ('v2i', tuple(self.outer_points)))
         self.inner_points = [139, 472, 357, 462, 473, 456, 562, 464, 621, 453, 639, 422, 642, 386, 646, 312, 657, 263, 647, 188, 623, 155, 565, 149, 524, 148, 501, 192, 485, 244, 477, 298, 433, 327, 379, 332, 317, 335, 261, 309, 250, 265, 219, 220, 213, 180, 193, 138, 172, 134, 153, 149, 143, 210, 121, 372, 121, 451, 139, 472] 
         batch.add(int(len(self.inner_points) / 2), pyglet.gl.GL_LINE_LOOP, None, ('v2i', tuple(self.inner_points)))
-        self.gate_points = [201, 554, 193, 457, 275, 558, 276, 452, 355, 554, 359, 448, 427, 559, 427, 445, 507, 551, 505, 448, 570, 556, 570, 446, 639, 546, 608, 444, 713, 520, 625, 434, 731, 452, 625, 420, 736, 396, 636, 385, 751, 343, 632, 332, 637, 256, 747, 264, 645, 222, 750, 205, 623, 182, 715, 108, 576, 164, 579, 55, 540, 170, 506, 50, 519, 170, 425, 106, 511, 206, 403, 180, 492, 277, 401, 223, 446, 341, 393, 237, 357, 345, 349, 233, 279, 332, 331, 236, 218, 247, 315, 205, 202, 176, 309, 145, 192, 163, 291, 94, 183, 144, 237, 28, 173, 148, 159, 50, 161, 158, 63, 113, 150, 236, 35, 234, 144, 302, 33, 290, 130, 374, 27, 371, 127, 419, 32, 453, 135, 452, 74, 532]
-        self.gate_vertex_list = batch.add(int(len(self.gate_points) / 2), pyglet.gl.GL_LINES, None, ('v2i', tuple(self.gate_points)))
+        self.gate_points = [201, 554, 193, 457, 275, 558, 276, 452, 355, 554, 359, 448, 427, 559, 427, 445, 507, 551, 505, 448, 570, 556, 570, 446, 639, 546, 608, 444, 713, 520, 625, 434, 731, 452, 625, 420, 736, 396, 636, 385, 751, 343, 632, 332, 637, 256, 747, 264, 645, 222, 750, 205, 623, 182, 715, 108, 576, 164, 579, 55, 540, 170, 506, 50, 519, 170, 425, 106, 511, 206, 403, 180, 492, 277, 401, 223, 446, 341, 393, 237, 357, 345, 349, 233, 279, 332, 331, 236, 218, 247, 315, 205, 202, 176, 309, 145, 192, 163, 291, 94, 183, 144, 237, 28, 173, 148, 159, 50, 161, 158, 63, 113, 150, 236, 35, 234, 144, 302, 33, 290, 130, 374, 27, 371, 127, 419, 32, 453, 135, 452, 74, 532]        
+        if self.verbose:
+            self.gate_vertex_list = batch.add(int(len(self.gate_points) / 2), pyglet.gl.GL_LINES, None, ('v2i', tuple(self.gate_points)))
 
     def get_outer_points(self):
         lines = []
@@ -243,9 +245,15 @@ class Car(pyglet.sprite.Sprite):
 
 class Gamestate():
     def __init__(self):
-        self.verbose = True
         self.car = Car(155, 500, verbose=False)
-        self.track = Track(self.verbose)
+        self.track = Track(verbose=False)
+        self.high_score = 0
+        self.score = 0
+        self.gate = 0
+        self.high_score_label = pyglet.text.Label('High score', font_size=12, font_name='Times New Roman',
+                          x=0, y=590, anchor_x='left', anchor_y='center', batch=batch)
+        self.score_label = pyglet.text.Label('Score', font_size=20, font_name='Times New Roman',
+                          x=window.width/2, y=590, anchor_x='center', anchor_y='top', batch=batch)
         self.debug_sprite = pyglet.text.Label('Sprite debug', font_size=10, font_name='Times New Roman',
                           x=790, y=590, anchor_x='right', anchor_y='center', batch=batch)
         self.debug_vel = pyglet.text.Label('Vel debug', font_size=10, font_name='Times New Roman',
@@ -256,6 +264,8 @@ class Gamestate():
         self.car.handle_player(dt)
 
     def update(self, dt):
+        self.score_label.text = f"Score: {self.score}"
+        self.high_score_label.text = f"High score: {self.high_score}"
         self.debug_sprite.text = f"sprite x: {floor(self.car.x)}, y: {floor(self.car.y)}, dir: {floor(self.car.rotation)}"
         self.debug_vel.text = f"l: {round(self.car.velocity.x,1)}, dir: {floor(self.car.velocity.angle)}, accel: {round(self.car.acceleration, 1)}"
         self.track.update(dt)
@@ -266,6 +276,8 @@ class Gamestate():
         if hit_point:
             print("Hit!")
             self.car.remove_collision()
+            self.gate = 0
+            self.score = 0
             self.car = Car(155, 500, verbose=False)        
     
     def detect_gate(self):
@@ -277,8 +289,24 @@ class Gamestate():
             gate_point2 = gate_points[i+1]
             hit_point = line_point_hit(Vec2d(gate_point1), Vec2d(gate_point2), Vec2d(self.car.position))
             if hit_point:
-                # TODO - keep track of current gate, check if progress, score.
-                print(f"Gate {gate}")
+                #print(f"Current gate: {self.gate},  new gate {gate}")  
+                if self.gate in [0,1] and gate == 33:
+                    print("Going back?")
+                    if self.score > 0: self.score -= 1
+                    self.gate = gate
+                elif self.gate == 33 and gate == 1: # one lap!
+                    print("Lap!")
+                    self.gate = 1
+                    self.score += 1
+                elif gate == self.gate + 1: # We're at the next gate: great!
+                    self.gate = gate
+                    self.score += 1
+                elif gate == self.gate - 1: # going backwards!
+                    print("Going back?")
+                    if self.score > 0: self.score -= 1
+                    self.gate = gate
+                 # gate == self.gate: ignore duplicate hits (we're still passing)
+                self.high_score = max(self.score, self.high_score)
 
     def detect_collision(self):
         body_points = self.car.get_body()
@@ -366,11 +394,8 @@ def on_mouse_motion(x, y, dx, dy):
             hit_point_v.delete()
             hit_point_v = None
 
-def update(dt):
-    world.update(dt)
-
 def start_up():
-    pyglet.clock.schedule_interval(update, 1.0/60.0) # update at 60Hz
+    pyglet.clock.schedule_interval(world.update, 1.0/60.0) # update at 60Hz
     window.clear()
     #window.flip() # ???
     window.set_visible(True)

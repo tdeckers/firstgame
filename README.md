@@ -13,6 +13,24 @@ python -m venv venv
 
 pip install -r .\requirements.txt
 
+## Machine Learning
+
+inputs:
+* velocity
+* (direction)
+* radar
+
+outputs:
+* forward
+* backward
+* brake
+* left
+* right
+
+feedback:
+* positive reward: gates or distance travelled (in the right direction)
+* negative reward: track hit
+
 ## Reference
 
 Collision detection: http://jeffreythompson.org/collision-detection/line-point.php

@@ -1,6 +1,6 @@
 from pymunk import Vec2d
 
-accuracy = 0.1
+accuracy = 0.3
 
 # detect line/point collision
 def line_point_hit(a, b, p):
