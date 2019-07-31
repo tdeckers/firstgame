@@ -4,28 +4,27 @@ from math import tan, radians, degrees, copysign, floor, cos, sin, sqrt
 import builtins
 from pymunk import Vec2d, Poly
 from itertools import chain
+import numpy as np
 
 from util.utils import rotate, closest_point
 from util.collision import line_line_hit, line_point_hit
 
-window = pyglet.window.Window(800, 600,caption="Game")
-keymap = pyglet.window.key.KeyStateHandler()
-window.push_handlers(keymap)
-batch = pyglet.graphics.Batch()
-car_batch = pyglet.graphics.Batch()
-fps_display = pyglet.window.FPSDisplay(window=window)
+FPS         = 60         # Frames per second
+WINDOW_W    = 800
+WINDOW_H    = 600
 
 class Track:
     def __init__(self, verbose=False):
         #group = pyglet.graphics.Group()
         self.verbose = verbose
+        self.batch=pyglet.graphics.Batch()
         self.outer_points = [112, 542, 315, 541, 476, 539, 609, 544, 700, 514, 721, 451, 734, 323, 736, 172, 692, 95, 628, 75, 514, 64, 445, 72, 440, 122, 414, 177, 404, 246, 345, 254, 321, 242, 301, 186, 290, 147, 276, 86, 250, 41, 166, 57, 78, 75, 48, 205, 29, 396, 47, 503, 112, 542]
-        batch.add(int(len(self.outer_points) / 2), pyglet.gl.GL_LINE_STRIP, None, ('v2i', tuple(self.outer_points)))
+        self.batch.add(int(len(self.outer_points) / 2), pyglet.gl.GL_LINE_STRIP, None, ('v2i', tuple(self.outer_points)))
         self.inner_points = [139, 472, 357, 462, 473, 456, 562, 464, 621, 453, 639, 422, 642, 386, 646, 312, 657, 263, 647, 188, 623, 155, 565, 149, 524, 148, 501, 192, 485, 244, 477, 298, 433, 327, 379, 332, 317, 335, 261, 309, 250, 265, 219, 220, 213, 180, 193, 138, 172, 134, 153, 149, 143, 210, 121, 372, 121, 451, 139, 472] 
-        batch.add(int(len(self.inner_points) / 2), pyglet.gl.GL_LINE_LOOP, None, ('v2i', tuple(self.inner_points)))
+        self.batch.add(int(len(self.inner_points) / 2), pyglet.gl.GL_LINE_LOOP, None, ('v2i', tuple(self.inner_points)))
         self.gate_points = [201, 554, 193, 457, 275, 558, 276, 452, 355, 554, 359, 448, 427, 559, 427, 445, 507, 551, 505, 448, 570, 556, 570, 446, 639, 546, 608, 444, 713, 520, 625, 434, 731, 452, 625, 420, 736, 396, 636, 385, 751, 343, 632, 332, 637, 256, 747, 264, 645, 222, 750, 205, 623, 182, 715, 108, 576, 164, 579, 55, 540, 170, 506, 50, 519, 170, 425, 106, 511, 206, 403, 180, 492, 277, 401, 223, 446, 341, 393, 237, 357, 345, 349, 233, 279, 332, 331, 236, 218, 247, 315, 205, 202, 176, 309, 145, 192, 163, 291, 94, 183, 144, 237, 28, 173, 148, 159, 50, 161, 158, 63, 113, 150, 236, 35, 234, 144, 302, 33, 290, 130, 374, 27, 371, 127, 419, 32, 453, 135, 452, 74, 532]        
         if self.verbose:
-            self.gate_vertex_list = batch.add(int(len(self.gate_points) / 2), pyglet.gl.GL_LINES, None, ('v2i', tuple(self.gate_points)))
+            self.gate_vertex_list = self.batch.add(int(len(self.gate_points) / 2), pyglet.gl.GL_LINES, None, ('v2i', tuple(self.gate_points)))
 
     def get_outer_points(self):
         lines = []
@@ -52,10 +51,11 @@ class Car(pyglet.sprite.Sprite):
     def __init__(self, x, y, angle=0.0, max_steering=40, max_acceleration=350.0, verbose=False):
         # size of car: 100 x 50
         self.verbose = verbose
+        self.custom_batch=pyglet.graphics.Batch() # TODO: figure out why I need to use custom batch here?!
         image = pyglet.image.load('resources/car.png')
         image.anchor_x = int(image.width / 2)
         image.anchor_y = int(image.height / 2)
-        pyglet.sprite.Sprite.__init__(self, image, x, y, batch=car_batch)
+        pyglet.sprite.Sprite.__init__(self, image, x, y, batch=self.custom_batch)
         self.scale = 0.4
         self.position_vector = Vec2d(x, y)
         self.velocity = Vec2d(0.0, 0.0)
@@ -74,12 +74,12 @@ class Car(pyglet.sprite.Sprite):
         self.radar = [None] * 8     # track radar hit points 
 
         if self.verbose:
-            self.shape = car_batch.add(4, pyglet.gl.GL_LINE_LOOP, None, ('v2i', self.get_body_flat()))
-            self.radar_lines = car_batch.add(16, pyglet.gl.GL_LINES, None, ('v2i', self.get_radar_lines_flat()))
-            self.radar_points = car_batch.add(0, pyglet.gl.GL_LINES, None, ('v2i', ()))
+            self.shape = self.custom_batch.add(4, pyglet.gl.GL_LINE_LOOP, None, ('v2i', self.get_body_flat()))
+            self.radar_lines = self.custom_batch.add(16, pyglet.gl.GL_LINES, None, ('v2i', self.get_radar_lines_flat()))
+            self.radar_points = self.custom_batch.add(0, pyglet.gl.GL_LINES, None, ('v2i', ()))
         self.collision_point = None
 
-    def handle_player(self, dt):
+    def handle_player(self, keymap, dt):
         if keymap[key.UP]:
             if self.velocity.x < 0:
                 self.acceleration = self.brake_deceleration
@@ -134,8 +134,8 @@ class Car(pyglet.sprite.Sprite):
         self.rotation += degrees(angular_velocity) * dt
 
         # Don't drive off screen.
-        self.position_vector.x = max(0, min(self.position_vector.x, window.width))
-        self.position_vector.y = max(0, min(self.position_vector.y, window.height))
+        self.position_vector.x = max(0, min(self.position_vector.x, WINDOW_W))
+        self.position_vector.y = max(0, min(self.position_vector.y, WINDOW_H))
 
         self.x = self.position_vector.x
         self.y = self.position_vector.y
@@ -187,7 +187,7 @@ class Car(pyglet.sprite.Sprite):
             point.x + 5, point.y - 5]
         if self.collision_point != None:
             self.collision_point.delete()
-        self.collision_point = car_batch.add(4, pyglet.gl.GL_LINES, None, 
+        self.collision_point = self.batch.add(4, pyglet.gl.GL_LINES, None, 
                 ('v2i', [int(i) for i in hit]),
                 ('c3B', (255, 0, 0, 255, 0, 0, 255, 0, 0, 255, 0, 0,))
             )                                            
@@ -243,25 +243,37 @@ class Car(pyglet.sprite.Sprite):
     def __repr__(self):
         return f"Car(pos={self.position_vector}, ang={self.angle})"
 
-class Gamestate():
+class Game():
+    metadata = {
+        'render.modes': ['human', 'rgb_array', 'state_pixels'],
+        'video.frames_per_second' : FPS
+    }    
+
     def __init__(self):
+        self.window = pyglet.window.Window(WINDOW_W, WINDOW_H, caption="Game")
+        self.window.clear()
+        self.keymap = pyglet.window.key.KeyStateHandler()
+        self.window.push_handlers(self.keymap)
+        self.batch = pyglet.graphics.Batch()
+        self.fps_display = pyglet.window.FPSDisplay(window=self.window)
+
         self.car = Car(155, 500, verbose=False)
         self.track = Track(verbose=False)
         self.high_score = 0
         self.score = 0
         self.gate = 0
         self.high_score_label = pyglet.text.Label('High score', font_size=12, font_name='Times New Roman',
-                          x=0, y=590, anchor_x='left', anchor_y='center', batch=batch)
+                          x=0, y=590, anchor_x='left', anchor_y='center', batch=self.batch)
         self.score_label = pyglet.text.Label('Score', font_size=20, font_name='Times New Roman',
-                          x=window.width/2, y=590, anchor_x='center', anchor_y='top', batch=batch)
+                          x=WINDOW_W/2, y=590, anchor_x='center', anchor_y='top', batch=self.batch)
         self.debug_sprite = pyglet.text.Label('Sprite debug', font_size=10, font_name='Times New Roman',
-                          x=790, y=590, anchor_x='right', anchor_y='center', batch=batch)
+                          x=790, y=590, anchor_x='right', anchor_y='center', batch=self.batch)
         self.debug_vel = pyglet.text.Label('Vel debug', font_size=10, font_name='Times New Roman',
-                          x=790, y=575, anchor_x='right', anchor_y='center', batch=batch)   
+                          x=790, y=575, anchor_x='right', anchor_y='center', batch=self.batch)   
         self.car_hit_point = None
 
     def handle_player(self, dt):
-        self.car.handle_player(dt)
+        self.car.handle_player(self.keymap, dt)
 
     def update(self, dt):
         self.score_label.text = f"Score: {self.score}"
@@ -355,9 +367,17 @@ class Gamestate():
                 return hit_point # Found collision, look no further. 
         return None 
 
-world = Gamestate()        
+world = Game()        
 
-@window.event
+@world.window.event
+def on_draw():
+    world.window.clear()
+    world.fps_display.draw() 
+    world.track.batch.draw()
+    world.batch.draw()
+    world.car.batch.draw()  
+
+@world.window.event
 def on_mouse_press(x, y, button, modifiers):
     if button == mouse.LEFT:
         print(f"x={x}, y={y}")
@@ -365,41 +385,30 @@ def on_mouse_press(x, y, button, modifiers):
         world.track.gate_points.append(y) 
         print(world.track.gate_points)
 
-@window.event
-def on_draw():
-    window.clear()
-    fps_display.draw() 
-    batch.draw()
-    car_batch.draw()
-
-hit_point_v = None
-
-@window.event
-def on_mouse_motion(x, y, dx, dy):
-    global hit_point_v
-    hit_point = line_line_hit(Vec2d(112, 542), Vec2d(315, 541), Vec2d(0,0), Vec2d(x,y))
-    if hit_point != None:
-        hit = [hit_point.x - 5, hit_point.y - 5,
-                                hit_point.x + 5, hit_point.y + 5,
-                                hit_point.x - 5, hit_point.y + 5,
-                                hit_point.x + 5, hit_point.y - 5]
-        if hit_point_v != None:
-            hit_point_v.delete()
-        hit_point_v = batch.add(4, pyglet.gl.GL_LINES, None, 
-            ('v2i', [int(i) for i in hit]),
-            ('c3B', (255, 0, 0, 255, 0, 0, 255, 0, 0, 255, 0, 0,))
-        )        
-    else:
-        if hit_point_v != None:
-            hit_point_v.delete()
-            hit_point_v = None
-
 def start_up():
     pyglet.clock.schedule_interval(world.update, 1.0/60.0) # update at 60Hz
-    window.clear()
-    #window.flip() # ???
-    window.set_visible(True)
     pyglet.app.run()
 
+restart = False
+
 if __name__ == '__main__':
+    from pyglet.window import key
+    a = np.array( [0.0, 0.0, 0.0] )
+    def key_press(k, mod):
+        global restart
+        if k==0xff0d: restart = True
+        if k==key.LEFT:  a[0] = -1.0
+        if k==key.RIGHT: a[0] = +1.0
+        if k==key.UP:    a[1] = +1.0
+        if k==key.DOWN:  a[2] = +1.0
+        if k==key.SPACE: a[3] = +1.0
+    def key_release(k, mod):
+        if k==key.LEFT  and a[0]==-1.0: a[0] = 0
+        if k==key.RIGHT and a[0]==+1.0: a[0] = 0
+        if k==key.UP:    a[1] = 0
+        if k==key.DOWN:  a[2] = 0   
+        if k==key.SPACE: a[3] = 0
+    #env = Game() 
+    #env.render()
+
     start_up()

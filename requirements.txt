@@ -1,2 +1,4 @@
 pyglet
 pymunk
+gym
+numpy
