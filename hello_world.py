@@ -1,14 +1,20 @@
 import pyglet
+from pyglet import gl
 from pyglet.window import key, mouse
 from math import tan, radians, degrees, copysign, floor, cos, sin, sqrt
 import builtins
 from pymunk import Vec2d, Poly
 from itertools import chain
+
 import numpy as np
+import gym
+from gym import spaces
+from gym.utils import seeding
 
 from util.utils import rotate, closest_point
 from util.collision import line_line_hit, line_point_hit
 
+import time
 FPS         = 60         # Frames per second
 WINDOW_W    = 800
 WINDOW_H    = 600
@@ -44,8 +50,11 @@ class Track:
             lines.append((self.gate_points[i], self.gate_points[i+1]))
         return lines
 
-    def update(self, dt):
-        None
+    def draw(self, viewer):
+        points = []
+        for i in range(0, len(self.outer_points)-1):
+            points.append((self.outer_points[i], self.outer_points[i+1]))
+        viewer.draw_polyline(points, linewidth=5)
 
 class Car(pyglet.sprite.Sprite):            
     def __init__(self, x, y, angle=0.0, max_steering=40, max_acceleration=350.0, verbose=False):
@@ -79,44 +88,58 @@ class Car(pyglet.sprite.Sprite):
             self.radar_points = self.custom_batch.add(0, pyglet.gl.GL_LINES, None, ('v2i', ()))
         self.collision_point = None
 
-    def handle_player(self, keymap, dt):
-        if keymap[key.UP]:
-            if self.velocity.x < 0:
-                self.acceleration = self.brake_deceleration
-            else:
-                #self.acceleration += 200 * dt    
-                self.acceleration = self.max_acceleration # Pedal = metal
-        elif keymap[key.DOWN]:
-            if self.velocity.x > 0:
-                self.acceleration = -self.brake_deceleration
-            else:
-                self.acceleration = -self.max_acceleration # Pedal = metal
-        elif keymap[key.SPACE]:
-            if abs(self.velocity.x) > dt * self.brake_deceleration:
-                self.acceleration = -copysign(self.brake_deceleration,self.velocity.x)
-            else:
-                self.acceleration = -1 * self.velocity.x / dt            
+    def forward(self, dt):
+        if self.velocity.x < 0:
+            self.acceleration = self.brake_deceleration
         else:
-            if abs(self.velocity.x) > dt * self.free_deceleration:
-                self.acceleration = -copysign(self.free_deceleration, self.velocity.x)
-            else:
-                if dt != 0:
-                    self.acceleration = -1 * self.velocity.x / dt    
-        
-        # limit max accelleration.   
-        if not keymap[key.SPACE]: # except when braking. 
-            self.acceleration = max(-self.max_acceleration, min(self.acceleration, self.max_acceleration))
+            #self.acceleration += 200 * dt    
+            self.acceleration = self.max_acceleration # Pedal = metal
 
-        if keymap[key.RIGHT]:
-            self.steering += 50 + self.steer_rate * dt
-        elif keymap[key.LEFT]:
-            self.steering -= 50 + self.steer_rate * dt
+    def reverse(self, dt):
+        if self.velocity.x > 0:
+            self.acceleration = -self.brake_deceleration
         else:
-            self.steering = 0
-        
+            self.acceleration = -self.max_acceleration # Pedal = metal
+
+    def brake(self, dt):
+        if abs(self.velocity.x) > dt * self.brake_deceleration:
+            self.acceleration = -copysign(self.brake_deceleration,self.velocity.x)
+        else:
+            self.acceleration = -1 * self.velocity.x / dt            
+
+    def roll(self, dt):
+        if abs(self.velocity.x) > dt * self.free_deceleration:
+            self.acceleration = -copysign(self.free_deceleration, self.velocity.x)
+        else:
+            if dt != 0:
+                self.acceleration = -1 * self.velocity.x / dt    
+
+    def right(self, dt):
+        self.steering += 50 + self.steer_rate * dt
         # limit steering
         self.steering = max(-self.max_steering, min(self.steering, self.max_steering))
 
+    def left(self, dt):
+        self.steering -= 50 + self.steer_rate * dt
+        # limit steering
+        self.steering = max(-self.max_steering, min(self.steering, self.max_steering))
+
+    def handle_player(self, keymap, dt):
+        if keymap[key.UP]:
+            self.forward(dt)
+        elif keymap[key.DOWN]:
+            self.reverse(dt)
+        elif keymap[key.SPACE]:
+            self.brake(dt)
+        else:
+            self.roll(dt)
+        
+        self.steering = 0
+        if keymap[key.RIGHT]:
+            self.right(dt)
+        elif keymap[key.LEFT]:
+            self.left(dt)
+        
         self.update(dt)
 
     def update(self, dt):
@@ -237,31 +260,43 @@ class Car(pyglet.sprite.Sprite):
         self.radar_points.vertices = [int(v) for v in vertices]        
 
     # TODO: consider moving all car graphics here.
-    def draw(self):
-        return
+    #def draw(self):
+    #    return
 
     def __repr__(self):
         return f"Car(pos={self.position_vector}, ang={self.angle})"
 
-class Game():
+class Game(gym.Env):
     metadata = {
         'render.modes': ['human', 'rgb_array', 'state_pixels'],
         'video.frames_per_second' : FPS
     }    
 
-    def __init__(self):
-        self.window = pyglet.window.Window(WINDOW_W, WINDOW_H, caption="Game")
-        self.window.clear()
-        self.keymap = pyglet.window.key.KeyStateHandler()
-        self.window.push_handlers(self.keymap)
+    def __init__(self):        
+        #self.window = pyglet.window.Window(WINDOW_W, WINDOW_H, caption="Game")
+        #self.window.clear()
+        #self.keymap = pyglet.window.key.KeyStateHandler()
+        #self.window.push_handlers(self.keymap)
         self.batch = pyglet.graphics.Batch()
-        self.fps_display = pyglet.window.FPSDisplay(window=self.window)
+        #self.fps_display = pyglet.window.FPSDisplay(window=self.window)
 
+        self.seed()
         self.car = Car(155, 500, verbose=False)
         self.track = Track(verbose=False)
         self.high_score = 0
         self.score = 0
+        self.prev_score = 0
         self.gate = 0
+        self.crash = False
+        self.reward = 0.0
+        self.prev_reward = 0.0
+        self.viewer = None
+        self.action_space = spaces.MultiDiscrete([2,2,1])      # steer (1=left, 2=right), gas (1=fwd, 2=rev), brake
+        self.observation_space = spaces.Tuple([
+            spaces.MultiDiscrete([self.car.max_velocity, 360]), # velocity, rotation
+            spaces.Box(low=0, high=np.inf, shape=(8,), dtype=np.float32)             # radars(8)
+        ])
+
         self.high_score_label = pyglet.text.Label('High score', font_size=12, font_name='Times New Roman',
                           x=0, y=590, anchor_x='left', anchor_y='center', batch=self.batch)
         self.score_label = pyglet.text.Label('Score', font_size=20, font_name='Times New Roman',
@@ -272,26 +307,32 @@ class Game():
                           x=790, y=575, anchor_x='right', anchor_y='center', batch=self.batch)   
         self.car_hit_point = None
 
+    def seed(self, seed=None):
+        self.np_random, seed = seeding.np_random(seed)
+        return [seed]
+
     def handle_player(self, dt):
-        self.car.handle_player(self.keymap, dt)
+        None#self.car.handle_player(self.keymap, dt)
 
     def update(self, dt):
+        if self.crash: # Handle this in the next update, to give AI a change to see this before we reset.
+            self.car.remove_collision()
+            self.reset()
+            return
         self.score_label.text = f"Score: {self.score}"
         self.high_score_label.text = f"High score: {self.high_score}"
         self.debug_sprite.text = f"sprite x: {floor(self.car.x)}, y: {floor(self.car.y)}, dir: {floor(self.car.rotation)}"
         self.debug_vel.text = f"l: {round(self.car.velocity.x,1)}, dir: {floor(self.car.velocity.angle)}, accel: {round(self.car.acceleration, 1)}"
-        self.track.update(dt)
         self.handle_player(dt)
+        self.car.update(dt)
+        self.prev_score = self.score # keep previous score for our AI.
         self.detect_gate()
         self.car.handle_radar(self.track) # TODO: consider running radar at lower frequency
         hit_point = self.detect_collision()
         if hit_point:
             print("Hit!")
-            self.car.remove_collision()
-            self.gate = 0
-            self.score = 0
-            self.car = Car(155, 500, verbose=False)        
-    
+            self.crash = True
+
     def detect_gate(self):
         gate_points = self.track.get_gate_points()
 
@@ -338,11 +379,11 @@ class Game():
                   body_point1 = body_points[0]
                   body_point2 = body_points[3]
                   hit_point = line_line_hit(Vec2d(track_point1), Vec2d(track_point2), Vec2d(body_point1), Vec2d(body_point2))  
-            if (hit_point == None):
-                self.car.remove_collision()
-            else:
+            if (hit_point != None):
                 self.car.draw_collision(hit_point)
                 return hit_point # Found collision, look no further.  
+            else:
+                self.car.remove_collision()
 
         # Check inner track.
         inner_points = self.track.get_inner_points()
@@ -360,30 +401,126 @@ class Game():
                   body_point1 = body_points[0]
                   body_point2 = body_points[3]
                   hit_point = line_line_hit(Vec2d(track_point1), Vec2d(track_point2), Vec2d(body_point1), Vec2d(body_point2))  
-            if (hit_point == None):
-                self.car.remove_collision()
-            else:
+            if (hit_point != None):
                 self.car.draw_collision(hit_point)
                 return hit_point # Found collision, look no further. 
+            else:
+                self.car.remove_collision()
         return None 
 
-world = Game()        
+    ## TF Env methods
+    def reset(self):
+        self.gate = 0
+        self.score = 0
+        self.car = Car(155, 500, verbose=False) # TODO: Consider implementing car.reset()
+        self.reward = 0.0
+        self.prev_reward = 0.0
+        self.crash = False
 
-@world.window.event
-def on_draw():
-    world.window.clear()
-    world.fps_display.draw() 
-    world.track.batch.draw()
-    world.batch.draw()
-    world.car.batch.draw()  
+    def step(self, action):
+        dt = 1.0/FPS
+        if action is not None:
+            if action[0] == 1:
+                self.car.left(dt)
+            elif action[0] == 2:
+                self.car.right(dt)
+            elif action[0] == 0:
+                self.car.steering = 0
 
-@world.window.event
-def on_mouse_press(x, y, button, modifiers):
-    if button == mouse.LEFT:
-        print(f"x={x}, y={y}")
-        world.track.gate_points.append(x)
-        world.track.gate_points.append(y) 
-        print(world.track.gate_points)
+            if action[1] == 1:
+                self.car.forward(dt)
+            if action[1] == 2:
+                self.car.reverse(dt)
+            if action[2] == 1:
+                self.car.brake(dt)      
+        self.update(dt)
+
+        self.state = self.render()
+
+        step_reward = 0
+        done = False        
+
+        if action is not None: # First step without action, called from reset()
+            self.reward -= 0.1
+            # credits for passing gate.
+            if self.score == self.prev_score + 1:
+                self.reward += 10
+            if self.score == self.prev_score - 1:
+                self.reward -= 20
+            # TODO: credits for finishing lap?
+            # big ding for hitting the track
+            if self.crash:
+                self.reward -= 100
+                done = True
+            step_reward = self.reward - self.prev_reward
+            self.prev_reward = self.reward
+
+        return self.state, step_reward, done, {}
+
+    def render(self, mode='human'):
+        assert mode in ['human', 'state_pixels', 'rgb_array']
+
+        if self.viewer is None:
+            from gym.envs.classic_control import rendering
+            self.viewer = rendering.Viewer(WINDOW_W, WINDOW_H)
+            self.score_label = pyglet.text.Label('0000', font_size=36,
+                x=20, y=WINDOW_H*2.5/40.00, anchor_x='left', anchor_y='center',
+                color=(255,255,255,255))
+        #    self.transform = rendering.Transform()   
+
+        arr = None
+        win = self.viewer.window
+        win.switch_to()
+        win.dispatch_events()
+
+        #win.clear()
+        #t = self.transform
+
+        VP_W = WINDOW_W
+        VP_H = WINDOW_H
+        
+        #gl.glViewport(0, 0, VP_W, VP_H)
+        #t.enable()
+        #t.disable()
+
+        self.track.draw(self.viewer)
+        self.render_indicators(WINDOW_W, WINDOW_H)
+
+        if mode == 'human':
+            win.flip()
+            return self.viewer.isopen
+
+        arr = [self.car.velocity, self.car.rotation] + self.car.radar
+        return arr
+
+    def render_indicators(self, W, H):
+        gl.glBegin(gl.GL_QUADS)
+        s = W/40.0
+        h = H/40.0
+        gl.glColor4f(0,0,0,1)
+        gl.glVertex3f(W, 0, 0)
+        gl.glVertex3f(W, 5*h, 0)
+        gl.glVertex3f(0, 5*h, 0)
+        gl.glVertex3f(0, 0, 0)
+        gl.glEnd()
+
+world = Game()
+
+# @world.window.event
+# def on_draw():
+#     world.window.clear()
+#     world.fps_display.draw() 
+#     world.track.batch.draw()
+#     world.batch.draw()
+#     world.car.batch.draw()  
+
+# @world.window.event
+# def on_mouse_press(x, y, button, modifiers):
+#     if button == mouse.LEFT:
+#         print(f"x={x}, y={y}")
+        #world.track.gate_points.append(x)
+        #world.track.gate_points.append(y) 
+        #print(world.track.gate_points)
 
 def start_up():
     pyglet.clock.schedule_interval(world.update, 1.0/60.0) # update at 60Hz
@@ -393,22 +530,45 @@ restart = False
 
 if __name__ == '__main__':
     from pyglet.window import key
-    a = np.array( [0.0, 0.0, 0.0] )
+    a = np.array( [1, 1, 0] )
     def key_press(k, mod):
         global restart
         if k==0xff0d: restart = True
-        if k==key.LEFT:  a[0] = -1.0
-        if k==key.RIGHT: a[0] = +1.0
-        if k==key.UP:    a[1] = +1.0
-        if k==key.DOWN:  a[2] = +1.0
-        if k==key.SPACE: a[3] = +1.0
+        if k==key.LEFT:  a[0] = 1
+        if k==key.RIGHT: a[0] = 2
+        if k==key.UP:    a[1] = 1
+        if k==key.DOWN:  a[1] = 2
+        if k==key.SPACE: a[2] = 1
     def key_release(k, mod):
-        if k==key.LEFT  and a[0]==-1.0: a[0] = 0
-        if k==key.RIGHT and a[0]==+1.0: a[0] = 0
-        if k==key.UP:    a[1] = 0
-        if k==key.DOWN:  a[2] = 0   
-        if k==key.SPACE: a[3] = 0
-    #env = Game() 
-    #env.render()
+        if k==key.LEFT and a[0] == 1:  a[0] = 0
+        if k==key.RIGHT and a[0] == 2: a[0] = 0
+        if k==key.UP and a[1] == 1:    a[1] = 0
+        if k==key.DOWN and a[1] == 2:  a[1] = 0   
+        if k==key.SPACE: a[2] = 0
+    #world.reset() # We're just starting.. no need to reset.
+    world.render()
+    world.viewer.window.on_key_press = key_press
+    world.viewer.window.on_key_release = key_release
 
-    start_up()
+    isopen = True
+    while isopen:
+        world.reset()
+        total_reward = 0.0
+        steps = 0
+        restart = False
+        while True:
+            s, r, done, info = world.step(a)
+            total_reward += r
+            if steps % 200 == 0 or done:
+                print("\naction " + str(["{:+0.2f}".format(x) for x in a]))
+                print("step {} total_reward {:+0.2f}".format(steps, total_reward))
+                #import matplotlib.pyplot as plt
+                #plt.imshow(s)
+                #plt.savefig("test.jpeg")
+            steps += 1
+            isopen = world.render()
+            #time.sleep(0.25)
+            if done or restart or isopen == False:
+                break
+
+    #start_up()
